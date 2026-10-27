@@ -6,6 +6,7 @@
 
   var DEFAULT_SETTINGS = {
     morningStart: '08:00',
+    morningEnd: '12:00',
     afternoonStart: '14:00',
     afternoonEnd: '18:00',
     periodMinutes: 45,
@@ -75,15 +76,22 @@
     var brk = Math.max(0, Math.round(Number(s.breakMinutes)) || 0);
 
     var mStart = toMinutes(s.morningStart);
+    var mEnd = toMinutes(s.morningEnd);
     var aStart = toMinutes(s.afternoonStart);
     var aEnd = toMinutes(s.afternoonEnd);
 
     if (mStart === null) mStart = 8 * 60;
     if (aStart === null) aStart = 14 * 60;
     if (aEnd === null) aEnd = 18 * 60;
+    // 兼容旧数据：没有“上午结束”时，沿用“下午开始”作为上午边界
+    if (mEnd === null) mEnd = aStart;
 
     if (aStart < mStart) aStart = mStart;
+    if (mEnd <= mStart) mEnd = mStart + periodLen;
     if (aEnd <= aStart) aEnd = aStart + periodLen;
+
+    // 上午不越过下午开始，避免时间重叠
+    var amEnd = Math.min(mEnd, aStart);
 
     var list = [];
     var guard;
@@ -91,7 +99,7 @@
     // 上午
     var cur = mStart;
     guard = 0;
-    while (cur + periodLen <= aStart && guard++ < 60) {
+    while (cur + periodLen <= amEnd && guard++ < 60) {
       list.push({ start: toHHMM(cur), end: toHHMM(cur + periodLen), session: 'am' });
       cur += periodLen + brk;
     }
@@ -162,9 +170,12 @@
       if (n >= 2 && v > 0) extraBreaks[n] = v;
     });
 
+    var afternoonStart = normalizeTime(s.afternoonStart, DEFAULT_SETTINGS.afternoonStart);
+
     var settings = {
       morningStart: normalizeTime(s.morningStart, DEFAULT_SETTINGS.morningStart),
-      afternoonStart: normalizeTime(s.afternoonStart, DEFAULT_SETTINGS.afternoonStart),
+      morningEnd: normalizeTime(s.morningEnd, afternoonStart),
+      afternoonStart: afternoonStart,
       afternoonEnd: normalizeTime(s.afternoonEnd, DEFAULT_SETTINGS.afternoonEnd),
       periodMinutes: clampInt(s.periodMinutes, 1, 300, DEFAULT_SETTINGS.periodMinutes),
       breakMinutes: clampInt(s.breakMinutes, 0, 120, DEFAULT_SETTINGS.breakMinutes),
@@ -597,6 +608,7 @@
   function openSettings() {
     var s = state.settings;
     $('setMorningStart').value = s.morningStart;
+    $('setMorningEnd').value = s.morningEnd;
     $('setAfternoonStart').value = s.afternoonStart;
     $('setAfternoonEnd').value = s.afternoonEnd;
     $('setPeriodLen').value = s.periodMinutes;
@@ -716,6 +728,9 @@
 
     var m = toMinutes($('setMorningStart').value);
     if (m !== null) s.morningStart = toHHMM(m);
+
+    var me = toMinutes($('setMorningEnd').value);
+    if (me !== null) s.morningEnd = toHHMM(me);
 
     var a = toMinutes($('setAfternoonStart').value);
     if (a !== null) s.afternoonStart = toHHMM(a);
