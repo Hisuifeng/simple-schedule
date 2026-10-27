@@ -402,6 +402,72 @@
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
+
+    updateCurrentClass();
+    setupMarquees();
+  }
+
+  function currentCellInfo() {
+    var now = new Date();
+    var todayAliases = [
+      ['周日', '周天', '星期日', '星期天'],
+      ['周一', '星期一'],
+      ['周二', '星期二'],
+      ['周三', '星期三'],
+      ['周四', '星期四'],
+      ['周五', '星期五'],
+      ['周六', '星期六']
+    ];
+    var today = todayAliases[now.getDay()];
+    var di = -1;
+    for (var d = 0; d < state.days.length; d++) {
+      if (today.indexOf(state.days[d]) >= 0) { di = d; break; }
+    }
+    if (di < 0) return null;
+
+    var mins = now.getHours() * 60 + now.getMinutes();
+    for (var i = 0; i < state.periods.length; i++) {
+      var p = state.periods[i];
+      var start = toMinutes(p.start);
+      var end = toMinutes(p.end);
+      if (start === null || end === null) continue;
+      if (mins >= start && mins < end) {
+        return state.courses[cellKey(di, i)] ? { day: di, period: i } : null;
+      }
+    }
+    return null;
+  }
+
+  function updateCurrentClass() {
+    var old = document.querySelectorAll('#timetable td.cell.current');
+    for (var i = 0; i < old.length; i++) old[i].classList.remove('current');
+
+    var info = currentCellInfo();
+    if (!info) return;
+
+    var cell = document.querySelector(
+      '#timetable td.cell[data-day="' + info.day + '"][data-period="' + info.period + '"]'
+    );
+    if (cell) cell.classList.add('current');
+  }
+
+  function setupMarquees() {
+    var names = document.querySelectorAll('#timetable .c-name');
+    for (var i = 0; i < names.length; i++) {
+      var el = names[i];
+      var inner = el.firstElementChild;
+      el.classList.remove('marquee');
+      el.style.removeProperty('--marquee-distance');
+      el.style.removeProperty('--marquee-duration');
+      if (!inner) continue;
+
+      var overflow = inner.scrollWidth - el.clientWidth;
+      if (overflow <= 2) continue;
+
+      el.classList.add('marquee');
+      el.style.setProperty('--marquee-distance', (-overflow) + 'px');
+      el.style.setProperty('--marquee-duration', Math.max(4, Math.round(overflow / 30)) + 's');
+    }
   }
 
   function buildNoonRow(dayList) {
@@ -436,6 +502,8 @@
     var td = document.createElement('td');
 
     td.className = 'cell';
+    td.dataset.day = String(di);
+    td.dataset.period = String(pi);
 
     if (course) {
       td.style.background = colorFor(course.name);
@@ -443,7 +511,10 @@
 
       var nameEl = document.createElement('div');
       nameEl.className = 'c-name';
-      nameEl.textContent = course.name;
+      var nameText = document.createElement('span');
+      nameText.className = 'c-name-text';
+      nameText.textContent = course.name;
+      nameEl.appendChild(nameText);
       td.appendChild(nameEl);
 
       var metaParts = [];
@@ -948,6 +1019,15 @@
   /* ==================== 启动 ==================== */
 
   function bindViewport() {
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        updateCurrentClass();
+        setupMarquees();
+      }, 150);
+    });
+
     if (!window.matchMedia) return;
     var mq = window.matchMedia('(max-width: 640px)');
     var onChange = function () { render(); };
@@ -969,6 +1049,11 @@
     bindEvents();
     bindViewport();
     render();
+
+    setInterval(updateCurrentClass, 30000);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) updateCurrentClass();
+    });
   }
 
   init();
