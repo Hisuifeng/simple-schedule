@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程表</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ 顶栏 ============ -->
+<div class="topbar">
+  <div class="topbar-title">课程表</div>
+  <div class="topbar-right">
+    <label class="switch">
+      <input type="checkbox" id="dragSwitch">
+      <span class="track"><span class="thumb"></span></span>
+      <span class="switch-label">拖动调整</span>
+    </label>
+    <button type="button" id="btnOpenSettings" class="btn-settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"></path>
+      </svg>
+      <span>设置</span>
+    </button>
+    <button type="button" id="btnOpenIO">导入 / 导出</button>
+  </div>
+</div>
+
+<!-- ============ 表格 ============ -->
+<main class="page">
+  <div class="table-wrap">
+    <table id="timetable"></table>
+  </div>
+  <p class="hint">
+    点击任意单元格打开编辑弹窗；打开右上角“拖动调整”后，可把已有课程拖到其他格子进行移动，目标格已有课程时会自动互换。点击右上角“设置”可隐藏或显示某一天，中午线以上为上午课程，以下为下午课程。
+  </p>
+</main>
+
+<!-- ============ 设置弹窗 ============ -->
+<div class="mask" id="modalSettings" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <span>设置</span>
+      <button type="button" class="icon-btn" data-close aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-section-head">
+        <span class="settings-section-title">显示星期</span>
+        <button type="button" id="btnShowAllDays">全部显示</button>
+      </div>
+      <div class="day-toggles" id="dayToggles"></div>
+      <p class="hint">点击星期按钮可隐藏或显示对应的一天，至少保留一天。</p>
+
+      <hr class="settings-divider">
+      <div class="settings-section-title">作息时间</div>
+      <div class="field"><label for="setMorningStart">上午开始</label><input type="time" id="setMorningStart"></div>
+      <div class="field"><label for="setAfternoonStart">下午开始</label><input type="time" id="setAfternoonStart"></div>
+      <div class="field"><label for="setAfternoonEnd">下午结束</label><input type="time" id="setAfternoonEnd"></div>
+      <div class="field"><label for="setPeriodLen">每节时长</label><input type="number" id="setPeriodLen" min="1" max="300" step="5" placeholder="分钟"></div>
+      <div class="field"><label for="setBreak">课间休息</label><input type="number" id="setBreak" min="0" max="120" step="5" placeholder="分钟"></div>
+      <p class="hint">上午从“上午开始”排到“下午开始”之前；下午从“下午开始”排到“下午结束”。点击“应用”后节次时间自动重新计算。</p>
+
+      <hr class="settings-divider">
+      <div class="settings-section-title">额外休息（按节次）</div>
+      <p class="hint">例如第 9 节下课后要吃饭休息 60 分钟，可在“第 10 节前”添加 60 分钟，第 10 节及之后的节次会整体顺延。</p>
+      <div class="extra-list" id="extraList"></div>
+      <div class="extra-add">
+        <select id="extraPeriod" aria-label="选择节次"></select>
+        <input type="number" id="extraMinutes" min="1" max="600" step="5" placeholder="分钟">
+        <button type="button" id="btnAddExtra">添加</button>
+      </div>
+      <p class="hint" id="extraMsg"></p>
+    </div>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button type="button" data-close>取消</button>
+      <button type="button" class="primary" id="btnApplySettings">应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 课程编辑弹窗 ============ -->
+<div class="mask" id="modalCourse" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <span id="courseModalTitle">编辑课程</span>
+      <button type="button" class="icon-btn" data-close aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label for="cName">课程名</label><input type="text" id="cName" placeholder="例如：高等数学"></div>
+      <div class="field"><label for="cTeacher">教师</label><input type="text" id="cTeacher" placeholder="例如：张老师"></div>
+      <div class="field"><label for="cRoom">地点</label><input type="text" id="cRoom" placeholder="例如：A101"></div>
+      <div class="field"><label for="cNote">备注</label><input type="text" id="cNote" placeholder="选填"></div>
+      <div class="field color-field">
+        <label>颜色</label>
+        <div class="swatches" id="colorSwatches"></div>
+      </div>
+      <p class="hint">颜色按课程名同步：同名的所有课程共用同一颜色，修改后立即全局生效。</p>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="danger" id="btnDeleteCourse">删除</button>
+      <span class="spacer"></span>
+      <button type="button" data-close>取消</button>
+      <button type="button" class="primary" id="btnSaveCourse">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 导入 / 导出弹窗 ============ -->
+<div class="mask" id="modalIO" hidden>
+  <div class="modal wide">
+    <div class="modal-head">
+      <span>导入 / 导出</span>
+      <button type="button" class="icon-btn" data-close aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <textarea id="ioArea" rows="14" spellcheck="false"
+        placeholder="点击“导出到此处并复制”，课表 JSON 会出现在这里并自动复制到剪贴板；也可以把 JSON 粘贴进来后点“从文本导入”。"></textarea>
+      <p class="hint" id="ioMsg"></p>
+    </div>
+    <div class="modal-foot">
+      <button type="button" id="btnExport">导出到此处并复制</button>
+      <button type="button" id="btnCopyArea">复制</button>
+      <span class="spacer"></span>
+      <button type="button" class="primary" id="btnImport">从文本导入</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
