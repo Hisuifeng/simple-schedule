@@ -24,7 +24,6 @@
       </svg>
       <span>设置</span>
     </button>
-    <button type="button" id="btnOpenIO">导入 / 导出</button>
   </div>
 </div>
 
@@ -34,7 +33,7 @@
     <table id="timetable"></table>
   </div>
   <p class="hint">
-    点击任意单元格打开编辑弹窗；打开右上角“拖动调整”后，可把已有课程拖到其他格子进行移动，目标格已有课程时会自动互换。点击右上角“设置”可隐藏或显示某一天，中午线以上为上午课程，以下为下午课程。
+    点击任意单元格打开编辑弹窗；打开右上角“拖动调整”后，可把已有课程拖到其他格子进行移动，目标格已有课程时会自动互换。点击右上角“设置”可隐藏或显示某一天、自动隐藏空行或调整作息；中午线以上为上午课程，以下为下午课程。
   </p>
 </main>
 
@@ -51,7 +50,14 @@
         <button type="button" id="btnShowAllDays">全部显示</button>
       </div>
       <div class="day-toggles" id="dayToggles"></div>
-      <p class="hint">点击星期按钮可隐藏或显示对应的一天，至少保留一天。</p>
+      <p class="hint">点击星期按钮可隐藏或显示对应的一天，至少保留一天；显示设置即时生效。</p>
+
+      <label class="switch setting-switch">
+        <input type="checkbox" id="hideEmptySwitch">
+        <span class="track"><span class="thumb"></span></span>
+        <span class="switch-label">自动隐藏空行</span>
+      </label>
+      <p class="hint">没有课程的节次会自动收起；需要向空节次添加课程时，可暂时关闭。</p>
 
       <hr class="settings-divider">
       <div class="settings-section-title">作息时间</div>
@@ -73,6 +79,13 @@
         <button type="button" id="btnAddExtra">添加</button>
       </div>
       <p class="hint" id="extraMsg"></p>
+
+      <hr class="settings-divider">
+      <div class="settings-section-title">数据备份</div>
+      <p class="hint">导出当前课表为 JSON，或从 JSON 备份恢复。清除浏览器数据前建议先导出。</p>
+      <div class="settings-actions">
+        <button type="button" id="btnOpenIO">导入 / 导出</button>
+      </div>
     </div>
     <div class="modal-foot">
       <span class="spacer"></span>

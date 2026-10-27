@@ -11,7 +11,8 @@
     afternoonEnd: '18:00',
     periodMinutes: 45,
     breakMinutes: 10,
-    extraBreaks: {}
+    extraBreaks: {},
+    hideEmptyPeriods: true
   };
 
   /* 深色扁平色板：配白色文字 */
@@ -179,7 +180,10 @@
       afternoonEnd: normalizeTime(s.afternoonEnd, DEFAULT_SETTINGS.afternoonEnd),
       periodMinutes: clampInt(s.periodMinutes, 1, 300, DEFAULT_SETTINGS.periodMinutes),
       breakMinutes: clampInt(s.breakMinutes, 0, 120, DEFAULT_SETTINGS.breakMinutes),
-      extraBreaks: extraBreaks
+      extraBreaks: extraBreaks,
+      hideEmptyPeriods: s.hideEmptyPeriods === undefined
+        ? DEFAULT_SETTINGS.hideEmptyPeriods
+        : Boolean(s.hideEmptyPeriods)
     };
 
     var days = (Array.isArray(data.days) && data.days.length)
@@ -309,6 +313,13 @@
     return window.innerWidth <= 640;
   }
 
+  function periodHasCourse(pi, dayList) {
+    for (var i = 0; i < dayList.length; i++) {
+      if (state.courses[cellKey(dayList[i], pi)]) return true;
+    }
+    return false;
+  }
+
   function render() {
     renderDayToggles();
 
@@ -346,13 +357,26 @@
     thead.appendChild(headRow);
     table.appendChild(thead);
 
+    // 自动隐藏空行；整张表都没有课程时仍显示全部，方便添加
+    var hideEmpty = state.settings.hideEmptyPeriods;
+    if (hideEmpty) {
+      var hasAny = false;
+      for (var k = 0; k < state.periods.length; k++) {
+        if (periodHasCourse(k, dayList)) { hasAny = true; break; }
+      }
+      if (!hasAny) hideEmpty = false;
+    }
+
     // 表体
     var tbody = document.createElement('tbody');
+    var pmStarted = false;
     state.periods.forEach(function (p, pi) {
-      var isFirstPm = (p.session === 'pm') &&
-        (pi === 0 || state.periods[pi - 1].session !== 'pm');
+      if (hideEmpty && !periodHasCourse(pi, dayList)) return;
 
-      if (isFirstPm) tbody.appendChild(buildNoonRow(dayList));
+      if (p.session === 'pm' && !pmStarted) {
+        pmStarted = true;
+        tbody.appendChild(buildNoonRow(dayList));
+      }
 
       var tr = document.createElement('tr');
 
@@ -613,6 +637,7 @@
     $('setAfternoonEnd').value = s.afternoonEnd;
     $('setPeriodLen').value = s.periodMinutes;
     $('setBreak').value = s.breakMinutes;
+    $('hideEmptySwitch').checked = !!s.hideEmptyPeriods;
 
     draftExtras = {};
     Object.keys(s.extraBreaks || {}).forEach(function (k) {
@@ -800,7 +825,7 @@
       applyData(JSON.parse(text));
       saveLocal();
       render();
-      closeModal('modalIO');
+      $('ioMsg').textContent = '导入成功，新数据已应用。';
     } catch (err) {
       $('ioMsg').textContent = '导入失败：' + err.message;
     }
@@ -855,10 +880,18 @@
 
     // 顶栏按钮
     $('btnOpenSettings').addEventListener('click', openSettings);
-    $('btnOpenIO').addEventListener('click', openIO);
+    $('btnOpenIO').addEventListener('click', function () {
+      closeModal('modalSettings');
+      openIO();
+    });
 
-    // 日期显隐
+    // 日期显隐 / 空行
     $('btnShowAllDays').addEventListener('click', showAllDays);
+    $('hideEmptySwitch').addEventListener('change', function () {
+      state.settings.hideEmptyPeriods = this.checked;
+      saveLocal();
+      render();
+    });
 
     // 时间设置
     $('btnApplySettings').addEventListener('click', applySettings);
@@ -894,17 +927,21 @@
       });
     }
 
-    // 点击遮罩关闭
+    // 点击遮罩关闭（导入 / 导出只能由 × 关闭）
     var masks = document.querySelectorAll('.mask');
     for (var j = 0; j < masks.length; j++) {
       masks[j].addEventListener('mousedown', function (e) {
-        if (e.target === this) this.hidden = true;
+        if (e.target !== this) return;
+        if (this.id === 'modalIO') return;
+        this.hidden = true;
       });
     }
 
-    // Esc 关闭
+    // Esc 关闭（导入 / 导出弹窗除外）
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') closeAllModals();
+      if (e.key !== 'Escape') return;
+      if (!$('modalIO').hidden) return;
+      closeAllModals();
     });
   }
 
