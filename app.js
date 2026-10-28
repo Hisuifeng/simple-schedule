@@ -21,7 +21,8 @@
     periodMinutes: 45,
     breakMinutes: 10,
     extraBreaks: {},
-    hideEmptyPeriods: true
+    hideEmptyPeriods: true,
+    mergeConsecutive: true
   };
 
   /* 深色扁平色板：配白色文字 */
@@ -42,6 +43,7 @@
 
   var dragEnabled = false;
   var copyEnabled = false;
+  var editMode = false;
   var dragSource = null;
 
   var UPCOMING_LEAD_MINUTES = 10;
@@ -51,6 +53,12 @@
   var editColorPicked = null;
   var draftExtras = {};
   var lastTodayIndex = null;
+
+  var HISTORY_LIMIT = 50;
+  var searchQuery = '';
+  var history = [];
+  var future = [];
+  var lastSnapshot = null;
 
   function $(id) { return document.getElementById(id); }
   function cellKey(day, period) { return day + '-' + period; }
@@ -169,8 +177,87 @@
 
   /* ==================== 存储 ==================== */
 
-  function saveLocal() {
+  function snapshot() {
+    var extras = {};
+    var rawExtras = state.settings.extraBreaks || {};
+    Object.keys(rawExtras)
+      .sort(function (a, b) { return Number(a) - Number(b); })
+      .forEach(function (k) { extras[k] = rawExtras[k]; });
+
+    var courses = {};
+    Object.keys(state.courses).sort().forEach(function (k) {
+      courses[k] = state.courses[k];
+    });
+
+    var colors = {};
+    Object.keys(state.colors).sort().forEach(function (k) {
+      colors[k] = state.colors[k];
+    });
+
+    return JSON.stringify({
+      days: state.days,
+      hiddenDays: state.hiddenDays,
+      settings: Object.assign({}, state.settings, { extraBreaks: extras }),
+      courses: courses,
+      colors: colors
+    });
+  }
+
+  function persistLocal() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  function saveLocal() {
+    var next = snapshot();
+
+    if (lastSnapshot === null) {
+      lastSnapshot = next;
+    } else if (next !== lastSnapshot) {
+      history.push(lastSnapshot);
+      if (history.length > HISTORY_LIMIT) history.shift();
+      future = [];
+      lastSnapshot = next;
+    }
+
+    persistLocal();
+    updateHistoryButtons();
+  }
+
+  function updateHistoryButtons() {
+    var undoBtn = $('btnUndo');
+    var redoBtn = $('btnRedo');
+    if (undoBtn) undoBtn.disabled = history.length === 0;
+    if (redoBtn) redoBtn.disabled = future.length === 0;
+  }
+
+  function undo() {
+    if (!history.length) return;
+
+    future.push(snapshot());
+    if (future.length > HISTORY_LIMIT) future.shift();
+
+    var prev = history.pop();
+    applyData(JSON.parse(prev));
+    lastSnapshot = snapshot();
+    persistLocal();
+    closeAllModals();
+    render();
+    updateHistoryButtons();
+  }
+
+  function redo() {
+    if (!future.length) return;
+
+    history.push(snapshot());
+    if (history.length > HISTORY_LIMIT) history.shift();
+
+    var next = future.pop();
+    applyData(JSON.parse(next));
+    lastSnapshot = snapshot();
+    persistLocal();
+    closeAllModals();
+    render();
+    updateHistoryButtons();
   }
 
   function applyData(data) {
@@ -197,7 +284,10 @@
       extraBreaks: extraBreaks,
       hideEmptyPeriods: s.hideEmptyPeriods === undefined
         ? DEFAULT_SETTINGS.hideEmptyPeriods
-        : Boolean(s.hideEmptyPeriods)
+        : Boolean(s.hideEmptyPeriods),
+      mergeConsecutive: s.mergeConsecutive === undefined
+        ? DEFAULT_SETTINGS.mergeConsecutive
+        : Boolean(s.mergeConsecutive)
     };
 
     var days = (Array.isArray(data.days) && data.days.length)
@@ -334,6 +424,14 @@
     return false;
   }
 
+  function sameCourse(a, b) {
+    if (!a || !b) return false;
+    return a.name === b.name &&
+      (a.teacher || '') === (b.teacher || '') &&
+      (a.room || '') === (b.room || '') &&
+      (a.note || '') === (b.note || '');
+  }
+
   function render() {
     renderDayToggles();
 
@@ -341,8 +439,8 @@
     var wrap = document.querySelector('.table-wrap');
     var prevScroll = wrap ? wrap.scrollLeft : 0;
     var dayList = visibleDayIndices();
-    var slotWidth = isMobileView() ? 104 : 124;
-    var dayWidth = isMobileView() ? 124 : 150;
+    var slotWidth = isMobileView() ? 88 : 124;
+    var dayWidth = isMobileView() ? 100 : 150;
 
     table.innerHTML = '';
     table.classList.toggle('drag-on', dragEnabled);
@@ -389,6 +487,42 @@
       if (!hasAny) hideEmpty = false;
     }
 
+    // 连堂课程：同一天、同一时段、连续节次且课程信息一致时合并
+    var mergeBlocks = {};
+    var mergeCovered = {};
+    if (state.settings.mergeConsecutive) {
+      dayList.forEach(function (di) {
+        var starts = new Array(state.periods.length);
+        var covered = new Array(state.periods.length);
+        for (var i = 0; i < state.periods.length; i++) {
+          starts[i] = null;
+          covered[i] = false;
+        }
+
+        var pi = 0;
+        while (pi < state.periods.length) {
+          var course = state.courses[cellKey(di, pi)];
+          if (!course) { pi++; continue; }
+
+          var end = pi;
+          while (end + 1 < state.periods.length &&
+                 state.periods[end + 1].session === state.periods[pi].session &&
+                 sameCourse(course, state.courses[cellKey(di, end + 1)])) {
+            end++;
+          }
+
+          if (end > pi) {
+            starts[pi] = { span: end - pi + 1, course: course };
+            for (var j = pi + 1; j <= end; j++) covered[j] = true;
+          }
+          pi = end + 1;
+        }
+
+        mergeBlocks[di] = starts;
+        mergeCovered[di] = covered;
+      });
+    }
+
     // 表体
     var tbody = document.createElement('tbody');
     var pmStarted = false;
@@ -418,7 +552,9 @@
       tr.appendChild(tdSlot);
 
       dayList.forEach(function (di) {
-        tr.appendChild(buildCell(di, pi));
+        if (mergeCovered[di] && mergeCovered[di][pi]) return;
+        var block = mergeBlocks[di] ? mergeBlocks[di][pi] : null;
+        tr.appendChild(buildCell(di, pi, block ? block.span : 1));
       });
 
       tbody.appendChild(tr);
@@ -428,6 +564,7 @@
     if (wrap) wrap.scrollLeft = prevScroll;
     updateNowHighlights();
     setupMarquees();
+    applySearch();
   }
 
   function scrollToToday() {
@@ -497,6 +634,16 @@
     return null;
   }
 
+  function findCellByPeriod(day, period) {
+    var cells = document.querySelectorAll('#timetable td.cell[data-day="' + day + '"]');
+    for (var i = 0; i < cells.length; i++) {
+      var start = Number(cells[i].dataset.period);
+      var span = Number(cells[i].dataset.span) || 1;
+      if (period >= start && period < start + span) return cells[i];
+    }
+    return null;
+  }
+
   function updateNowHighlights() {
     var now = new Date();
     var today = todayDayIndex(now);
@@ -519,17 +666,13 @@
 
     var current = currentCellInfo(now);
     if (current) {
-      var curCell = document.querySelector(
-        '#timetable td.cell[data-day="' + current.day + '"][data-period="' + current.period + '"]'
-      );
+      var curCell = findCellByPeriod(current.day, current.period);
       if (curCell) curCell.classList.add('current');
     }
 
     var upcoming = upcomingCellInfo(now);
     if (upcoming) {
-      var upCell = document.querySelector(
-        '#timetable td.cell[data-day="' + upcoming.day + '"][data-period="' + upcoming.period + '"]'
-      );
+      var upCell = findCellByPeriod(upcoming.day, upcoming.period);
       if (upCell && !upCell.classList.contains('current')) upCell.classList.add('upcoming');
     }
 
@@ -558,6 +701,49 @@
     }
   }
 
+  function courseMatches(course, q) {
+    if (!course || !q) return false;
+    var fields = [course.name, course.teacher, course.room, course.note];
+    for (var i = 0; i < fields.length; i++) {
+      if (String(fields[i] || '').toLowerCase().indexOf(q) >= 0) return true;
+    }
+    return false;
+  }
+
+  function applySearch() {
+    var table = $('timetable');
+    if (!table) return;
+
+    var q = searchQuery.trim().toLowerCase();
+    table.classList.toggle('search-on', !!q);
+
+    var cells = table.querySelectorAll('td.cell');
+    var hits = 0;
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i];
+      var key = cellKey(Number(cell.dataset.day), Number(cell.dataset.period));
+      var hit = !!q && courseMatches(state.courses[key], q);
+      cell.classList.toggle('search-hit', hit);
+      cell.classList.toggle('search-dim', !!q && !hit);
+      if (hit) hits += Number(cell.dataset.span) || 1;
+    }
+
+    var count = $('searchCount');
+    var clear = $('btnClearSearch');
+    if (count) {
+      count.hidden = !q;
+      count.textContent = q ? (hits ? '找到 ' + hits + ' 节' : '无匹配') : '';
+    }
+    if (clear) clear.hidden = !q;
+  }
+
+  function clearSearch() {
+    searchQuery = '';
+    var input = $('searchInput');
+    if (input) input.value = '';
+    applySearch();
+  }
+
   function buildNoonRow(dayList) {
     var tr = document.createElement('tr');
     tr.className = 'noon-row';
@@ -584,7 +770,8 @@
     return tr;
   }
 
-  function buildCell(di, pi) {
+  function buildCell(di, pi, span) {
+    span = span || 1;
     var key = cellKey(di, pi);
     var course = state.courses[key];
     var td = document.createElement('td');
@@ -592,6 +779,12 @@
     td.className = 'cell';
     td.dataset.day = String(di);
     td.dataset.period = String(pi);
+    td.dataset.span = String(span);
+    if (span > 1) {
+      td.rowSpan = span;
+      td.classList.add('merged');
+      td.title = '连堂 ' + span + ' 节，点击编辑整段课程';
+    }
 
     if (course) {
       td.style.background = colorFor(course.name);
@@ -605,14 +798,18 @@
       nameEl.appendChild(nameText);
       td.appendChild(nameEl);
 
-      var metaParts = [];
-      if (course.teacher) metaParts.push(course.teacher);
-      if (course.room) metaParts.push(course.room);
-      if (metaParts.length) {
-        var metaEl = document.createElement('div');
-        metaEl.className = 'c-meta';
-        metaEl.textContent = metaParts.join(' · ');
-        td.appendChild(metaEl);
+      if (course.teacher) {
+        var teacherEl = document.createElement('div');
+        teacherEl.className = 'c-meta c-teacher';
+        teacherEl.textContent = course.teacher;
+        td.appendChild(teacherEl);
+      }
+
+      if (course.room) {
+        var roomEl = document.createElement('div');
+        roomEl.className = 'c-meta c-room';
+        roomEl.textContent = course.room;
+        td.appendChild(roomEl);
       }
 
       if (course.note) {
@@ -622,15 +819,22 @@
         td.appendChild(noteEl);
       }
 
-      if (dragEnabled) td.draggable = true;
+      if (span > 1) {
+        var spanEl = document.createElement('div');
+        spanEl.className = 'c-span';
+        spanEl.textContent = '连堂 ' + span + ' 节';
+        td.appendChild(spanEl);
+      }
+
+      if (dragEnabled && span === 1) td.draggable = true;
     } else {
       td.classList.add('empty');
     }
 
-    td.addEventListener('click', function () { openCourseModal(di, pi); });
+    td.addEventListener('click', function () { openCourseModal(di, pi, span); });
 
     td.addEventListener('dragstart', function (e) {
-      if (!dragEnabled || !state.courses[key]) { e.preventDefault(); return; }
+      if (span > 1 || !dragEnabled || !state.courses[key]) { e.preventDefault(); return; }
       dragSource = key;
       e.dataTransfer.effectAllowed = copyEnabled ? 'copy' : 'move';
       try { e.dataTransfer.setData('text/plain', key); } catch (err) {}
@@ -644,7 +848,7 @@
     });
 
     td.addEventListener('dragover', function (e) {
-      if (!dragEnabled || !dragSource) return;
+      if (span > 1 || !dragEnabled || !dragSource) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = copyEnabled ? 'copy' : 'move';
       td.classList.add('drop-target');
@@ -655,6 +859,7 @@
     });
 
     td.addEventListener('drop', function (e) {
+      if (span > 1) return;
       e.preventDefault();
       td.classList.remove('drop-target');
       var src = dragSource;
@@ -709,16 +914,21 @@
 
   /* ==================== 课程编辑弹窗 ==================== */
 
-  function openCourseModal(di, pi) {
-    editTarget = { day: di, period: pi };
+  function openCourseModal(di, pi, span) {
+    span = span || 1;
+    editTarget = { day: di, period: pi, span: span };
 
     var course = state.courses[cellKey(di, pi)];
     var period = state.periods[pi];
-
-    $('courseModalTitle').textContent =
-      state.days[di] + ' 第' + (pi + 1) + '节 · ' +
+    var endPeriod = state.periods[Math.min(pi + span - 1, state.periods.length - 1)];
+    var range = span > 1
+      ? '第' + (pi + 1) + '–' + (pi + span) + '节'
+      : '第' + (pi + 1) + '节';
+    var title = state.days[di] + ' ' + range + ' · ' +
       (period.session === 'am' ? '上午' : '下午') + ' ' +
-      period.start + '–' + period.end;
+      period.start + '–' + endPeriod.end;
+    if (span > 1) title += ' · 连堂 ' + span + ' 节';
+    $('courseModalTitle').textContent = title;
 
     $('cName').value = course ? (course.name || '') : '';
     $('cTeacher').value = course ? (course.teacher || '') : '';
@@ -807,11 +1017,15 @@
     var teacher = $('cTeacher').value.trim();
     var room = $('cRoom').value.trim();
     var note = $('cNote').value.trim();
-    var key = cellKey(editTarget.day, editTarget.period);
+    var span = editTarget.span || 1;
+    var keys = [];
+    for (var i = 0; i < span; i++) {
+      keys.push(cellKey(editTarget.day, editTarget.period + i));
+    }
     var renameAll = $('renameAllSame').checked;
 
     if (!name && !teacher && !room && !note) {
-      delete state.courses[key];
+      keys.forEach(function (key) { delete state.courses[key]; });
     } else {
       if (!name) name = '未命名';
 
@@ -824,7 +1038,9 @@
         delete state.colors[editOriginalName];
       }
 
-      state.courses[key] = { name: name, teacher: teacher, room: room, note: note };
+      keys.forEach(function (key) {
+        state.courses[key] = { name: name, teacher: teacher, room: room, note: note };
+      });
 
       if (editColorPicked) {
         state.colors[name] = editColorPicked;
@@ -840,7 +1056,10 @@
 
   function deleteCourseEdit() {
     if (!editTarget) return;
-    delete state.courses[cellKey(editTarget.day, editTarget.period)];
+    var span = editTarget.span || 1;
+    for (var i = 0; i < span; i++) {
+      delete state.courses[cellKey(editTarget.day, editTarget.period + i)];
+    }
     saveLocal();
     render();
     closeModal('modalCourse');
@@ -853,7 +1072,7 @@
     if (keys.length <= 1) return;
 
     if (!window.confirm(
-      '确定删除所有 ' + keys.length + ' 门“' + editOriginalName + '”课程吗？此操作不可撤销。'
+      '确定删除所有 ' + keys.length + ' 门“' + editOriginalName + '”课程吗？删除后可通过撤销恢复。'
     )) return;
 
     keys.forEach(function (key) { delete state.courses[key]; });
@@ -875,6 +1094,7 @@
     $('setPeriodLen').value = s.periodMinutes;
     $('setBreak').value = s.breakMinutes;
     $('hideEmptySwitch').checked = !!s.hideEmptyPeriods;
+    $('mergeSwitch').checked = !!s.mergeConsecutive;
 
     draftExtras = {};
     Object.keys(s.extraBreaks || {}).forEach(function (k) {
@@ -1002,6 +1222,7 @@
 
     s.periodMinutes = clampInt($('setPeriodLen').value, 1, 300, s.periodMinutes);
     s.breakMinutes = clampInt($('setBreak').value, 0, 120, s.breakMinutes);
+    s.mergeConsecutive = $('mergeSwitch').checked;
 
     var extras = {};
     Object.keys(draftExtras).forEach(function (k) {
@@ -1106,9 +1327,50 @@
     for (var i = 0; i < masks.length; i++) masks[i].hidden = true;
   }
 
+  function setEditMode(on) {
+    editMode = !!on;
+
+    if (editMode) {
+      dragEnabled = true;
+      copyEnabled = false;
+    } else {
+      dragEnabled = false;
+      copyEnabled = false;
+    }
+
+    $('dragSwitch').checked = dragEnabled;
+    $('copySwitch').checked = copyEnabled;
+    $('editBar').hidden = !editMode;
+    $('btnEditMode').classList.toggle('active', editMode);
+    $('btnEditMode').setAttribute('aria-pressed', editMode ? 'true' : 'false');
+    $('btnEditModeText').textContent = editMode ? '完成' : '编辑';
+    document.body.classList.toggle('edit-mode', editMode);
+
+    render();
+  }
+
   /* ==================== 事件绑定 ==================== */
 
   function bindEvents() {
+    // 编辑模式
+    $('btnEditMode').addEventListener('click', function () {
+      setEditMode(!editMode);
+    });
+
+    // 撤销 / 重做
+    $('btnUndo').addEventListener('click', undo);
+    $('btnRedo').addEventListener('click', redo);
+
+    // 搜索
+    $('searchInput').addEventListener('input', function () {
+      searchQuery = this.value;
+      applySearch();
+    });
+    $('btnClearSearch').addEventListener('click', function () {
+      clearSearch();
+      $('searchInput').focus();
+    });
+
     // 拖动 / 复制开关
     $('dragSwitch').addEventListener('change', function () {
       dragEnabled = this.checked;
@@ -1134,11 +1396,20 @@
       closeModal('modalSettings');
       openIO();
     });
+    $('btnPrint').addEventListener('click', function () {
+      closeModal('modalSettings');
+      window.print();
+    });
 
     // 日期显隐 / 空行
     $('btnShowAllDays').addEventListener('click', showAllDays);
     $('hideEmptySwitch').addEventListener('change', function () {
       state.settings.hideEmptyPeriods = this.checked;
+      saveLocal();
+      render();
+    });
+    $('mergeSwitch').addEventListener('change', function () {
+      state.settings.mergeConsecutive = this.checked;
       saveLocal();
       render();
     });
@@ -1188,21 +1459,62 @@
       });
     }
 
-    // Esc 关闭（导入 / 导出弹窗除外）
+    // 快捷键：Esc / 搜索 / 撤销重做
     document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      if (!$('modalIO').hidden) return;
-      closeAllModals();
+      var target = e.target;
+      var tag = target && target.tagName;
+      var typing = target && (
+        tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable ||
+        (tag === 'INPUT' && target.type !== 'checkbox' && target.type !== 'radio')
+      );
+      var modalOpen = !!document.querySelector('.mask:not([hidden])');
+
+      if (e.key === 'Escape') {
+        if (!$('modalIO').hidden) return;
+        if (modalOpen) { closeAllModals(); return; }
+        if (searchQuery || target === $('searchInput')) {
+          clearSearch();
+          if (target === $('searchInput')) target.blur();
+        }
+        return;
+      }
+
+      if (typing || modalOpen) return;
+
+      if (e.key === '/') {
+        e.preventDefault();
+        $('searchInput').focus();
+        $('searchInput').select();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        var key = e.key.toLowerCase();
+        if (key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) redo(); else undo();
+        } else if (key === 'y') {
+          e.preventDefault();
+          redo();
+        }
+      }
     });
   }
 
   /* ==================== 启动 ==================== */
+
+  function syncTopbarHeight() {
+    var topbar = document.querySelector('.topbar');
+    if (!topbar) return;
+    document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+  }
 
   function bindViewport() {
     var resizeTimer = null;
     window.addEventListener('resize', function () {
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(function () {
+        syncTopbarHeight();
         updateNowHighlights();
         setupMarquees();
       }, 150);
@@ -1229,9 +1541,14 @@
       state.colors = {};
       state.hiddenDays = [];
     }
+    lastSnapshot = snapshot();
+    searchQuery = $('searchInput').value || '';
     bindEvents();
     bindViewport();
     render();
+    updateHistoryButtons();
+    syncTopbarHeight();
+    window.addEventListener('load', syncTopbarHeight);
 
     setInterval(updateNowHighlights, 15000);
     document.addEventListener('visibilitychange', function () {
