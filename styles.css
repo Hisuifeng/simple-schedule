@@ -9,6 +9,7 @@
   --primary:#2563eb;
   --primary-dark:#1d4ed8;
   --current:#facc15;
+  --upcoming:#0ea5e9;
   --danger:#b42318;
 }
 *{box-sizing:border-box;}
@@ -137,6 +138,16 @@ th{
   letter-spacing:.02em;white-space:nowrap;
   border-bottom:2px solid var(--line-strong);
 }
+th.day-head.today{
+  background:#eff6ff;color:var(--primary);
+  box-shadow:inset 0 -3px 0 var(--primary);
+}
+th.day-head.today::after{
+  content:"今天";display:inline-block;margin-left:4px;padding:0 4px;
+  background:var(--primary);color:#fff;
+  font-size:9px;font-weight:600;line-height:1.6;letter-spacing:0;
+  vertical-align:1px;
+}
 td{font-size:13px;}
 
 /* ---------- 节次 + 时间 ---------- */
@@ -193,6 +204,8 @@ td.cell{
 }
 td.cell.empty{color:#c3cad4;}
 td.cell.empty:hover{background:#f6f8fb;}
+td.cell.today-col.empty{background:#f7faff;}
+td.cell.today-col.empty:hover{background:#eef4ff;}
 td.cell.empty::after{
   content:"+";position:absolute;top:6px;right:8px;
   font-size:15px;line-height:1;color:#c3cad4;opacity:0;
@@ -201,6 +214,7 @@ td.cell.empty::after{
 td.cell.empty:hover::after{opacity:1;}
 td.cell:not(.empty):hover{filter:brightness(1.06);}
 table.drag-on td.cell:not(.empty){cursor:move;}
+table.copy-on td.cell:not(.empty){cursor:copy;}
 td.cell.dragging{opacity:.35;}
 td.cell.drop-target{outline:2px dashed var(--primary);outline-offset:-3px;}
 
@@ -217,6 +231,20 @@ td.cell.current::before{
 }
 td.cell.current .c-meta,
 td.cell.current .c-note{padding-right:44px;}
+
+td.cell.upcoming{
+  z-index:1;
+  box-shadow:inset 0 0 0 3px var(--upcoming);
+}
+td.cell.upcoming::before{
+  content:"即将上课";
+  position:absolute;right:0;bottom:0;z-index:2;
+  padding:0 5px;
+  background:var(--upcoming);color:#fff;
+  font-size:10px;font-weight:700;line-height:1.5;letter-spacing:.02em;
+}
+td.cell.upcoming .c-meta,
+td.cell.upcoming .c-note{padding-right:58px;}
 
 .c-name{
   font-weight:600;font-size:13px;line-height:1.3;
@@ -283,6 +311,26 @@ td.cell.current .c-note{padding-right:44px;}
 .field.color-field{align-items:flex-start;}
 .field.color-field > label{padding-top:6px;}
 
+.same-name-box{
+  margin:2px 0 14px;padding:10px 12px;
+  border:1px solid #dbe4f0;background:#f8fafc;
+}
+.same-name-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;}
+.same-name-title{font-size:12.5px;font-weight:600;color:#344054;}
+.same-name-text{font-size:12px;line-height:1.5;color:var(--muted);}
+.check-line{
+  display:flex;align-items:flex-start;gap:8px;margin-top:9px;
+  font-size:13px;line-height:1.5;color:#344054;cursor:pointer;
+}
+.check-line input{
+  width:15px;height:15px;margin:2px 0 0;flex:none;
+  accent-color:var(--primary);
+}
+.same-name-hint{
+  margin:5px 0 0 23px;font-size:11.5px;line-height:1.5;color:var(--muted);
+}
+.same-name-delete{margin-top:9px;font-size:12.5px;padding:5px 10px;}
+
 .swatches{display:flex;flex-wrap:wrap;gap:8px;flex:1;}
 .swatch{
   width:28px;height:28px;padding:0;border:2px solid transparent;
@@ -332,10 +380,7 @@ td.cell.current .c-note{padding-right:44px;}
   .topbar-title{font-size:15px;}
   .topbar-right{flex:1 1 auto;justify-content:flex-end;flex-wrap:wrap;gap:8px;}
   .topbar-right button{padding:7px 12px;font-size:13px;}
-  .topbar .switch-label{
-    position:absolute;width:1px;height:1px;padding:0;margin:-1px;
-    overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;
-  }
+  .topbar .switch-label{font-size:11.5px;}
 
   .page{padding:12px;}
   .day-toggle{padding:5px 12px;font-size:12px;min-height:38px;}
@@ -353,6 +398,11 @@ td.cell.current .c-note{padding-right:44px;}
   td.cell.current::before{font-size:9px;padding:0 4px;}
   td.cell.current .c-meta,
   td.cell.current .c-note{padding-right:38px;}
+  td.cell.upcoming::before{font-size:9px;padding:0 4px;}
+  td.cell.upcoming .c-meta,
+  td.cell.upcoming .c-note{padding-right:50px;}
+  .same-name-box{padding:9px 10px;}
+  .same-name-hint{margin-left:23px;}
   .hint{font-size:11.5px;}
 
   .mask{padding:10px;}

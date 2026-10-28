@@ -12,10 +12,15 @@
 <div class="topbar">
   <div class="topbar-title">课程表</div>
   <div class="topbar-right">
-    <label class="switch">
+    <label class="switch" title="拖动调整：拖动课程以移动或互换">
       <input type="checkbox" id="dragSwitch">
       <span class="track"><span class="thumb"></span></span>
-      <span class="switch-label">拖动调整</span>
+      <span class="switch-label">拖动</span>
+    </label>
+    <label class="switch" title="复制模式：拖动课程时复制，原课程保留">
+      <input type="checkbox" id="copySwitch">
+      <span class="track"><span class="thumb"></span></span>
+      <span class="switch-label">复制</span>
     </label>
     <button type="button" id="btnOpenSettings" class="btn-settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -33,7 +38,7 @@
     <table id="timetable"></table>
   </div>
   <p class="hint">
-    点击任意单元格打开编辑弹窗；打开右上角“拖动调整”后，可把已有课程拖到其他格子进行移动，目标格已有课程时会自动互换。点击右上角“设置”可隐藏或显示某一天、自动隐藏空行或调整作息；中午线以上为上午课程，以下为下午课程。
+    点击任意单元格打开编辑弹窗；打开右上角“拖动”后，可拖动课程移动或互换；再打开“复制”后，拖动会复制课程（目标格已有课程时会被覆盖）。点击右上角“设置”可隐藏或显示某一天、自动隐藏空行或调整作息；中午线以上为上午课程，以下为下午课程。
   </p>
 </main>
 
@@ -110,6 +115,18 @@
       <div class="field color-field">
         <label>颜色</label>
         <div class="swatches" id="colorSwatches"></div>
+      </div>
+      <div class="same-name-box" id="sameNameBox" hidden>
+        <div class="same-name-head">
+          <span class="same-name-title">同名课程</span>
+          <span class="same-name-text" id="sameNameText"></span>
+        </div>
+        <label class="check-line">
+          <input type="checkbox" id="renameAllSame">
+          <span>保存时同时重命名所有同名课程</span>
+        </label>
+        <p class="same-name-hint">只同步课程名，教师、地点、备注保持不变。</p>
+        <button type="button" class="danger same-name-delete" id="btnDeleteSameName">删除所有同名课程</button>
       </div>
       <p class="hint">颜色按课程名同步：同名的所有课程共用同一颜色，修改后立即全局生效。</p>
     </div>

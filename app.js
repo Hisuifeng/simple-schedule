@@ -3,6 +3,15 @@
 
   var STORAGE_KEY = 'timetable.v3';
   var DEFAULT_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+  var DAY_ALIASES = [
+    ['周日', '周天', '星期日', '星期天'],
+    ['周一', '星期一'],
+    ['周二', '星期二'],
+    ['周三', '星期三'],
+    ['周四', '星期四'],
+    ['周五', '星期五'],
+    ['周六', '星期六']
+  ];
 
   var DEFAULT_SETTINGS = {
     morningStart: '08:00',
@@ -32,11 +41,16 @@
   };
 
   var dragEnabled = false;
+  var copyEnabled = false;
   var dragSource = null;
 
+  var UPCOMING_LEAD_MINUTES = 10;
+
   var editTarget = null;
+  var editOriginalName = null;
   var editColorPicked = null;
   var draftExtras = {};
+  var lastTodayIndex = null;
 
   function $(id) { return document.getElementById(id); }
   function cellKey(day, period) { return day + '-' + period; }
@@ -324,12 +338,15 @@
     renderDayToggles();
 
     var table = $('timetable');
+    var wrap = document.querySelector('.table-wrap');
+    var prevScroll = wrap ? wrap.scrollLeft : 0;
     var dayList = visibleDayIndices();
     var slotWidth = isMobileView() ? 104 : 124;
     var dayWidth = isMobileView() ? 124 : 150;
 
     table.innerHTML = '';
     table.classList.toggle('drag-on', dragEnabled);
+    table.classList.toggle('copy-on', copyEnabled);
     table.style.minWidth = (slotWidth + dayList.length * dayWidth) + 'px';
 
     // 列宽
@@ -350,7 +367,12 @@
     ['节次 / 时间'].concat(dayList.map(function (di) { return state.days[di]; }))
       .forEach(function (text, i) {
         var th = document.createElement('th');
-        if (i === 0) th.className = 'slot-head';
+        if (i === 0) {
+          th.className = 'slot-head';
+        } else {
+          th.className = 'day-head';
+          th.dataset.day = String(dayList[i - 1]);
+        }
         th.textContent = text;
         headRow.appendChild(th);
       });
@@ -403,52 +425,118 @@
     });
     table.appendChild(tbody);
 
-    updateCurrentClass();
+    if (wrap) wrap.scrollLeft = prevScroll;
+    updateNowHighlights();
     setupMarquees();
   }
 
-  function currentCellInfo() {
-    var now = new Date();
-    var todayAliases = [
-      ['周日', '周天', '星期日', '星期天'],
-      ['周一', '星期一'],
-      ['周二', '星期二'],
-      ['周三', '星期三'],
-      ['周四', '星期四'],
-      ['周五', '星期五'],
-      ['周六', '星期六']
-    ];
-    var today = todayAliases[now.getDay()];
-    var di = -1;
+  function scrollToToday() {
+    var today = todayDayIndex();
+    if (today < 0) return;
+
+    var wrap = document.querySelector('.table-wrap');
+    var th = document.querySelector('#timetable th[data-day="' + today + '"]');
+    if (!wrap || !th) return;
+
+    var wrapRect = wrap.getBoundingClientRect();
+    var thRect = th.getBoundingClientRect();
+    if (thRect.left >= wrapRect.left && thRect.right <= wrapRect.right) return;
+
+    var offset = thRect.left - wrapRect.left + wrap.scrollLeft;
+    var slot = document.querySelector('#timetable .slot-col');
+    var stickyW = slot ? slot.offsetWidth : 0;
+    var targetLeft = Math.max(stickyW + 4, (wrap.clientWidth - th.offsetWidth) / 2);
+    wrap.scrollLeft = Math.max(0, Math.min(offset - targetLeft, wrap.scrollWidth - wrap.clientWidth));
+  }
+
+  function todayDayIndex(now) {
+    now = now || new Date();
+    var names = DAY_ALIASES[now.getDay()];
     for (var d = 0; d < state.days.length; d++) {
-      if (today.indexOf(state.days[d]) >= 0) { di = d; break; }
+      if (names.indexOf(state.days[d]) >= 0) return d;
     }
+    return -1;
+  }
+
+  function findPeriodAt(mins) {
+    for (var i = 0; i < state.periods.length; i++) {
+      var start = toMinutes(state.periods[i].start);
+      var end = toMinutes(state.periods[i].end);
+      if (start === null || end === null) continue;
+      if (mins >= start && mins < end) return i;
+    }
+    return -1;
+  }
+
+  function currentCellInfo(now) {
+    now = now || new Date();
+    var di = todayDayIndex(now);
+    if (di < 0) return null;
+
+    var mins = now.getHours() * 60 + now.getMinutes();
+    var pi = findPeriodAt(mins);
+    if (pi < 0) return null;
+
+    return state.courses[cellKey(di, pi)] ? { day: di, period: pi } : null;
+  }
+
+  function upcomingCellInfo(now) {
+    now = now || new Date();
+    var di = todayDayIndex(now);
     if (di < 0) return null;
 
     var mins = now.getHours() * 60 + now.getMinutes();
     for (var i = 0; i < state.periods.length; i++) {
-      var p = state.periods[i];
-      var start = toMinutes(p.start);
-      var end = toMinutes(p.end);
-      if (start === null || end === null) continue;
-      if (mins >= start && mins < end) {
-        return state.courses[cellKey(di, i)] ? { day: di, period: i } : null;
-      }
+      var start = toMinutes(state.periods[i].start);
+      if (start === null || start <= mins) continue;
+      if (!state.courses[cellKey(di, i)]) continue;
+      return (start - mins <= UPCOMING_LEAD_MINUTES)
+        ? { day: di, period: i }
+        : null;
     }
     return null;
   }
 
-  function updateCurrentClass() {
-    var old = document.querySelectorAll('#timetable td.cell.current');
-    for (var i = 0; i < old.length; i++) old[i].classList.remove('current');
+  function updateNowHighlights() {
+    var now = new Date();
+    var today = todayDayIndex(now);
 
-    var info = currentCellInfo();
-    if (!info) return;
-
-    var cell = document.querySelector(
-      '#timetable td.cell[data-day="' + info.day + '"][data-period="' + info.period + '"]'
+    var old = document.querySelectorAll(
+      '#timetable .today, #timetable .today-col, ' +
+      '#timetable td.cell.current, #timetable td.cell.upcoming'
     );
-    if (cell) cell.classList.add('current');
+    for (var i = 0; i < old.length; i++) {
+      old[i].classList.remove('today', 'today-col', 'current', 'upcoming');
+    }
+
+    if (today >= 0) {
+      var th = document.querySelector('#timetable th[data-day="' + today + '"]');
+      if (th) th.classList.add('today');
+
+      var cells = document.querySelectorAll('#timetable td.cell[data-day="' + today + '"]');
+      for (var c = 0; c < cells.length; c++) cells[c].classList.add('today-col');
+    }
+
+    var current = currentCellInfo(now);
+    if (current) {
+      var curCell = document.querySelector(
+        '#timetable td.cell[data-day="' + current.day + '"][data-period="' + current.period + '"]'
+      );
+      if (curCell) curCell.classList.add('current');
+    }
+
+    var upcoming = upcomingCellInfo(now);
+    if (upcoming) {
+      var upCell = document.querySelector(
+        '#timetable td.cell[data-day="' + upcoming.day + '"][data-period="' + upcoming.period + '"]'
+      );
+      if (upCell && !upCell.classList.contains('current')) upCell.classList.add('upcoming');
+    }
+
+    if (today !== lastTodayIndex) {
+      lastTodayIndex = today;
+      scrollToToday();
+    }
   }
 
   function setupMarquees() {
@@ -544,7 +632,7 @@
     td.addEventListener('dragstart', function (e) {
       if (!dragEnabled || !state.courses[key]) { e.preventDefault(); return; }
       dragSource = key;
-      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.effectAllowed = copyEnabled ? 'copy' : 'move';
       try { e.dataTransfer.setData('text/plain', key); } catch (err) {}
       td.classList.add('dragging');
     });
@@ -558,7 +646,7 @@
     td.addEventListener('dragover', function (e) {
       if (!dragEnabled || !dragSource) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      e.dataTransfer.dropEffect = copyEnabled ? 'copy' : 'move';
       td.classList.add('drop-target');
     });
 
@@ -572,7 +660,11 @@
       var src = dragSource;
       dragSource = null;
       if (!src || src === key) return;
-      moveOrSwap(src, key);
+      if (copyEnabled) {
+        copyCourse(src, key);
+      } else {
+        moveOrSwap(src, key);
+      }
     });
 
     return td;
@@ -600,6 +692,21 @@
     render();
   }
 
+  function copyCourse(srcKey, dstKey) {
+    var source = state.courses[srcKey];
+    if (!source) return;
+
+    state.courses[dstKey] = {
+      name: source.name,
+      teacher: source.teacher,
+      room: source.room,
+      note: source.note
+    };
+
+    saveLocal();
+    render();
+  }
+
   /* ==================== 课程编辑弹窗 ==================== */
 
   function openCourseModal(di, pi) {
@@ -618,14 +725,44 @@
     $('cRoom').value = course ? (course.room || '') : '';
     $('cNote').value = course ? (course.note || '') : '';
 
+    editOriginalName = course ? course.name : null;
     editColorPicked = (course && state.colors[course.name]) ? state.colors[course.name] : null;
 
     $('btnDeleteCourse').style.display = course ? '' : 'none';
 
+    renderSameNameBox(course);
     renderSwatches();
     openModal('modalCourse');
 
     setTimeout(function () { $('cName').focus(); }, 0);
+  }
+
+  function sameNameKeys(name) {
+    return Object.keys(state.courses).filter(function (key) {
+      return state.courses[key].name === name;
+    });
+  }
+
+  function renderSameNameBox(course) {
+    var box = $('sameNameBox');
+    var renameAll = $('renameAllSame');
+    renameAll.checked = false;
+
+    if (!course || !editOriginalName) {
+      box.hidden = true;
+      return;
+    }
+
+    var keys = sameNameKeys(editOriginalName);
+    if (keys.length <= 1) {
+      box.hidden = true;
+      return;
+    }
+
+    box.hidden = false;
+    $('sameNameText').textContent =
+      '当前有 ' + keys.length + ' 门课程与原名“' + editOriginalName + '”相同（含本格）。';
+    $('btnDeleteSameName').textContent = '删除所有同名课程（' + keys.length + '）';
   }
 
   function renderSwatches() {
@@ -671,11 +808,22 @@
     var room = $('cRoom').value.trim();
     var note = $('cNote').value.trim();
     var key = cellKey(editTarget.day, editTarget.period);
+    var renameAll = $('renameAllSame').checked;
 
     if (!name && !teacher && !room && !note) {
       delete state.courses[key];
     } else {
       if (!name) name = '未命名';
+
+      if (renameAll && editOriginalName && name !== editOriginalName) {
+        Object.keys(state.courses).forEach(function (k) {
+          if (state.courses[k].name === editOriginalName) {
+            state.courses[k].name = name;
+          }
+        });
+        delete state.colors[editOriginalName];
+      }
+
       state.courses[key] = { name: name, teacher: teacher, room: room, note: note };
 
       if (editColorPicked) {
@@ -693,6 +841,24 @@
   function deleteCourseEdit() {
     if (!editTarget) return;
     delete state.courses[cellKey(editTarget.day, editTarget.period)];
+    saveLocal();
+    render();
+    closeModal('modalCourse');
+  }
+
+  function deleteAllSameName() {
+    if (!editOriginalName) return;
+
+    var keys = sameNameKeys(editOriginalName);
+    if (keys.length <= 1) return;
+
+    if (!window.confirm(
+      '确定删除所有 ' + keys.length + ' 门“' + editOriginalName + '”课程吗？此操作不可撤销。'
+    )) return;
+
+    keys.forEach(function (key) { delete state.courses[key]; });
+    delete state.colors[editOriginalName];
+
     saveLocal();
     render();
     closeModal('modalCourse');
@@ -943,9 +1109,22 @@
   /* ==================== 事件绑定 ==================== */
 
   function bindEvents() {
-    // 拖动开关
+    // 拖动 / 复制开关
     $('dragSwitch').addEventListener('change', function () {
       dragEnabled = this.checked;
+      if (!dragEnabled) {
+        copyEnabled = false;
+        $('copySwitch').checked = false;
+      }
+      render();
+    });
+
+    $('copySwitch').addEventListener('change', function () {
+      copyEnabled = this.checked;
+      if (copyEnabled && !dragEnabled) {
+        dragEnabled = true;
+        $('dragSwitch').checked = true;
+      }
       render();
     });
 
@@ -974,6 +1153,7 @@
     // 课程编辑
     $('btnSaveCourse').addEventListener('click', saveCourseEdit);
     $('btnDeleteCourse').addEventListener('click', deleteCourseEdit);
+    $('btnDeleteSameName').addEventListener('click', deleteAllSameName);
 
     ['cName', 'cTeacher', 'cRoom', 'cNote'].forEach(function (id) {
       $(id).addEventListener('keydown', function (e) {
@@ -1023,14 +1203,17 @@
     window.addEventListener('resize', function () {
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(function () {
-        updateCurrentClass();
+        updateNowHighlights();
         setupMarquees();
       }, 150);
     });
 
     if (!window.matchMedia) return;
     var mq = window.matchMedia('(max-width: 640px)');
-    var onChange = function () { render(); };
+    var onChange = function () {
+      render();
+      scrollToToday();
+    };
     if (mq.addEventListener) {
       mq.addEventListener('change', onChange);
     } else if (mq.addListener) {
@@ -1050,9 +1233,9 @@
     bindViewport();
     render();
 
-    setInterval(updateCurrentClass, 30000);
+    setInterval(updateNowHighlights, 15000);
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) updateCurrentClass();
+      if (!document.hidden) updateNowHighlights();
     });
   }
 
